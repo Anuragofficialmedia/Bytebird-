@@ -1,174 +1,214 @@
 Bytebird Social App
 
-একই রেপো-স্ট্রাকচারে রাখা পাঁচটি পেজ এবং ফোল্ডার:
+এই রেপো-স্ট্রাকচারে পাঁচটি পেজ, CSS ও JS ফাইল সহ:
 
 bytebird/
 ├── index.html         # Home / Feed
 ├── people.html        # Discover People
-├── join.html          # Join / Register
-├── settings.html      # Settings / Privacy Policy
+├── join.html          # Join / Register (Local + Google Auth)
+├── settings.html      # Settings & Privacy Policy + Secret Code Flow
 ├── dev.html           # Developer Mode Dashboard
 ├── css/
-│   └── style.css      # UI Styling (Tailwind + custom)
+│   └── style.css      # Tailwind + Custom Styling
 ├── js/
-│   ├── auth.js        # Login/Auth Logic
-│   ├── posts.js       # Post Create/Fetch
-│   ├── people.js      # Follow/Discover Logic
-│   ├── settings.js    # Policy Flow + Secret Code
-│   └── firebase.js    # Firebase Init + Config
-└── README.md          # Setup Instructions
+│   ├── firebase.js    # Firebase init & config
+│   ├── auth.js        # Auth & Session Logic
+│   ├── posts.js       # Post Create & Fetch
+│   ├── people.js      # Follow / Discover Logic
+│   └── settings.js    # Policy Flow & Dev Mode Unlock
+└── README.md          # Setup & Deploy Instructions
 
 
 ---
 
-1. index.html (Feed)
+1. CSS: css/style.css
 
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bytebird - Feed</title>
-  <link href="css/style.css" rel="stylesheet">
-</head>
-<body class="bg-blue-50">
-  <header class="flex justify-between p-4 shadow">
-    <div><img src="/assets/logo.svg" alt="Bytebird" class="h-8"></div>
-    <button onclick="goSettings()" class="text-xl">⚙️</button>
-  </header>
-  <main class="p-4">
-    <h1 class="text-2xl font-bold">Welcome, <span id="username"></span>!</h1>
-    <nav class="flex mt-4">
-      <button id="tab-feed" class="flex-1 p-2 bg-white rounded-l">Feed</button>
-      <button id="tab-people" class="flex-1 p-2 bg-blue-100 rounded-r" onclick="goPeople()">People</button>
-    </nav>
-    <section id="feed-container" class="mt-4">
-      <div id="posts"></div>
-      <div class="text-center mt-4">
-        <button onclick="showCreatePost()" class="bg-blue-400 text-white px-4 py-2 rounded">Create Post</button>
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom overrides */
+body { font-family: 'Segoe UI', sans-serif; }
+.input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; border: 1px solid #ccc; border-radius: 0.375rem; }
+.btn-primary { background-color: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; }
+.btn-secondary { background-color: #bfdbfe; color: #1e3a8a; padding: 0.5rem 1rem; border-radius: 0.375rem; }
+
+2. Firebase Init: js/firebase.js
+
+// TODO: Replace with your Firebase project config
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+3. Auth Logic: js/auth.js
+
+// Session Check & Redirect
+auth.onAuthStateChanged(user => {
+  if (!user && !location.href.includes('join.html')) {
+    location.href = 'join.html';
+  } else if (user && location.href.includes('join.html')) {
+    location.href = 'index.html';
+  }
+  if (user) {
+    document.getElementById('username')?.innerText = user.displayName || user.email;
+  }
+});
+
+// Google Login
+function googleLogin() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.addScope('profile');
+  auth.signInWithPopup(provider);
+}
+
+// Join / Register handler
+async function handleJoin(e) {
+  e.preventDefault();
+  const name = document.getElementById('name').value;
+  const dob = document.getElementById('dob').value;
+  const file = document.getElementById('avatar').files[0];
+  const user = await auth.createUserWithEmailAndPassword(`${dob}@bytebird.me`, 'defaultPass');
+  await user.user.updateProfile({ displayName: name });
+  if (file) {
+    const ref = firebase.storage().ref(`avatars/${user.user.uid}`);
+    await ref.put(file);
+    const url = await ref.getDownloadURL();
+    await user.user.updateProfile({ photoURL: url });
+  }
+}
+
+4. Posts Logic: js/posts.js
+
+// Fetch & render posts
+async function loadPosts() {
+  const snap = await db.collection('posts').orderBy('createdAt', 'desc').get();
+  const container = document.getElementById('posts');
+  snap.forEach(doc => {
+    const data = doc.data();
+    const el = document.createElement('div');
+    el.className = 'bg-white p-4 rounded mb-4';
+    el.innerHTML = `
+      <div class="flex items-center mb-2">
+        <img src="${data.avatar}" class="h-8 w-8 rounded-full mr-2" />
+        <strong>${data.name}</strong>
       </div>
-    </section>
-  </main>
-  <script src="js/firebase.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/posts.js"></script>
-</body>
-</html>
+      <p>${data.text}</p>
+    `;
+    container.appendChild(el);
+  });
+}
 
-2. people.html (Discover People)
+document.addEventListener('DOMContentLoaded', loadPosts);
 
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bytebird - People</title>
-  <link href="css/style.css" rel="stylesheet">
-</head>
-<body class="bg-blue-50">
-  <header class="flex justify-between p-4 shadow">
-    <button onclick="goFeed()">🏠</button>
-    <img id="profile-pic" src="" alt="Profile" class="h-8 rounded-full">
-  </header>
-  <main class="p-4">
-    <h1 class="text-2xl font-bold">Discover People</h1>
-    <div id="people-list" class="mt-4 space-y-2"></div>
-  </main>
-  <script src="js/firebase.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/people.js"></script>
-</body>
-</html>
+// Create Post
+function showCreatePost() {
+  const text = prompt('আপনার পোস্ট লিখুন:');
+  if (!text) return;
+  const user = auth.currentUser;
+  db.collection('posts').add({
+    uid: user.uid,
+    name: user.displayName,
+    avatar: user.photoURL || '',
+    text,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  }).then(() => location.reload());
+}
 
-3. join.html (Registration)
+5. People Logic: js/people.js
 
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Join Bytebird</title>
-  <link href="css/style.css" rel="stylesheet">
-</head>
-<body class="bg-blue-50 flex items-center justify-center min-h-screen">
-  <div class="bg-white p-6 rounded shadow w-full max-w-md">
-    <h2 class="text-xl font-bold mb-4">Join Bytebird</h2>
-    <form id="join-form" onsubmit="handleJoin(event)">
-      <label>Real Name</label>
-      <input required id="name" class="input" />
-      <label>Date of Birth</label>
-      <input type="date" required id="dob" class="input" />
-      <label>Profile Picture (Optional)</label>
-      <input type="file" accept="image/*" id="avatar" class="input" />
-      <div class="mt-4">
-        <button type="submit" class="btn-primary">Join Now</button>
+async function loadPeople() {
+  const snap = await db.collection('users').get();
+  const list = document.getElementById('people-list');
+  snap.forEach(doc => {
+    const u = doc.data();
+    const item = document.createElement('div');
+    item.className = 'flex justify-between bg-white p-4 rounded';
+    item.innerHTML = `
+      <div>
+        <strong>${u.name}</strong><br><small>@${u.username}</small>
       </div>
-      <div class="mt-4 text-center">OR</div>
-      <div class="mt-2"><button type="button" onclick="googleLogin()" class="btn-secondary">Connect with Google</button></div>
-      <div class="mt-2 text-center"><a href="index.html">Already have an account? Login</a></div>
-    </form>
-  </div>
+      <button class="btn-secondary" onclick="toggleFollow('${doc.id}')">Follow</button>
+    `;
+    list.appendChild(item);
+  });
+}
 
-  <script src="js/firebase.js"></script>
-  <script src="js/auth.js"></script>
-</body>
-</html>
+function toggleFollow(uid) {
+  const user = auth.currentUser;
+  // Simplified follow logic in Firestore
+  const ref = db.collection('follows').doc(user.uid);
+  ref.set({ [uid]: true }, { merge: true });
+  alert('Following!');
+}
 
-4. settings.html (Settings & Privacy Policy)
+document.addEventListener('DOMContentLoaded', loadPeople);
 
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings</title>
-  <link href="css/style.css" rel="stylesheet">
-</head>
-<body class="bg-blue-50 p-4">
-  <header class="flex justify-between items-center">
-    <button onclick="goFeed()">🏠</button>
-    <h2 class="text-xl font-bold">Settings</h2>
-  </header>
-  <main class="mt-4">
-    <section>
-      <h3 class="font-bold">Privacy Policy & Community Guidelines</h3>
-      <p>আমাদের প্ল্যাটফর্ম খুব একটা ডেটা সংরক্ষণ করে না। নিজের ডাটা নিজের দায়িত্বে। স্পিচ স্বাধীনতা, কিন্তু ভুল বা অবমাননাকর মন্তব্যের দায় নিজেকেই বহন করতে হবে।</p>
-      <button id="continue-policy" class="btn-primary mt-4">Continue to Policy</button>
-    </section>
-  </main>
-  <script src="js/settings.js"></script>
-</body>
-</html>
+6. Settings & Dev Unlock: js/settings.js
 
-5. dev.html (Developer Mode Dashboard)
+document.getElementById('continue-policy').onclick = () => {
+  const code = prompt('সিক্রেট কোড দিন:');
+  if (code === 'Jay Radhe Krishna 108') {
+    location.href = 'dev.html';
+  } else {
+    alert('ভুল কোড!');
+  }
+};
 
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dev Dashboard</title>
-  <link href="css/style.css" rel="stylesheet">
-</head>
-<body class="bg-blue-50 p-4">
-  <h2 class="text-2xl font-bold">Developer Mode</h2>
-  <div id="admin-tools" class="mt-4 space-y-4">
-    <!-- List all accounts -->
-    <div id="accounts-list"></div>
-    <!-- Actions -->
-    <div>
-      <button onclick="showChangeLogo()" class="btn-primary">Change App Logo</button>
-    </div>
-  </div>
-  <script src="js/firebase.js"></script>
-  <script src="js/settings.js"></script>
-</body>
-</html>
+// Dev page: list accounts & actions
+if (location.href.includes('dev.html')) {
+  db.collection('users').get().then(snap => {
+    const list = document.getElementById('accounts-list');
+    snap.forEach(doc => {
+      const u = doc.data();
+      const el = document.createElement('div');
+      el.className = 'bg-white p-2 rounded mb-2 flex justify-between';
+      el.innerHTML = `
+        <span>${u.name} (@${u.username})</span>
+        <div>
+          <button onclick="impersonate('${doc.id}')">Enter</button>
+          <button onclick="deleteUser('${doc.id}')">Delete</button>
+        </div>
+      `;
+      list.appendChild(el);
+    });
+  });
+
+  window.impersonate = uid => {
+    // store as admin session token
+    sessionStorage.setItem('impersonate', uid);
+    alert('Impersonation enabled! Refresh to see.');
+  };
+  window.deleteUser = uid => {
+    db.collection('users').doc(uid).delete().then(() => alert('Deleted!'));
+  };
+}
 
 
 ---
 
-বাকি JS & CSS এবং firebase.js setup সহ বিস্তারিত README.md আমি add করবো।
+README.md
 
-এখন জানিয়ে দিন, detailed JS logic-ও বসাম বা আগেই Firebase config দেবেন?
+# Bytebird Social App
+
+## Setup
+1. Clone this repo.
+2. Create Firebase project, enable Auth, Firestore, Storage.
+3. Replace `js/firebase.js` with your config.
+4. Deploy on GitHub Pages (branch `main`).
+
+## Pages
+- **join.html**: Register / Google login.
+- **index.html**: Feed & Post.
+- **people.html**: Discover & Follow.
+- **settings.html**: Privacy Policy + Secret Code unlocks `dev.html`.
+- **dev.html**: Admin dashboard (impersonate, delete, change logo).
 
