@@ -1,214 +1,508 @@
-Bytebird Social App
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, collection, query, onSnapshot, updateDoc, deleteDoc, addDoc, getDocs, arrayUnion, arrayRemove, where } from 'firebase/firestore';
+import { LogIn, UserPlus, Mail, Lock, Calendar, Image, Eye, EyeOff, Settings, Home, Users, PlusCircle, CheckCircle, Trash2, Edit, LogOut, Search, Bell, MessageSquare } from 'lucide-react'; // For icons
 
-এই রেপো-স্ট্রাকচারে পাঁচটি পেজ, CSS ও JS ফাইল সহ:
+// Context for Firebase and User
+const AppContext = createContext();
 
-bytebird/
-├── index.html         # Home / Feed
-├── people.html        # Discover People
-├── join.html          # Join / Register (Local + Google Auth)
-├── settings.html      # Settings & Privacy Policy + Secret Code Flow
-├── dev.html           # Developer Mode Dashboard
-├── css/
-│   └── style.css      # Tailwind + Custom Styling
-├── js/
-│   ├── firebase.js    # Firebase init & config
-│   ├── auth.js        # Auth & Session Logic
-│   ├── posts.js       # Post Create & Fetch
-│   ├── people.js      # Follow / Discover Logic
-│   └── settings.js    # Policy Flow & Dev Mode Unlock
-└── README.md          # Setup & Deploy Instructions
+const AppProvider = ({ children }) => {
+  const [app, setApp] = useState(null);
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
+  useEffect(() => {
+    try {
+      const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+      const initializedApp = initializeApp(firebaseConfig);
+      const firestoreDb = getFirestore(initializedApp);
+      const firebaseAuth = getAuth(initializedApp);
 
----
+      setApp(initializedApp);
+      setDb(firestoreDb);
+      setAuth(firebaseAuth);
 
-1. CSS: css/style.css
+      const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+        if (user) {
+          setUserId(user.uid);
+        } else {
+          try {
+            // Attempt to sign in with custom token if available, otherwise anonymously
+            if (typeof __initial_auth_token !== 'undefined') {
+              await signInWithCustomToken(firebaseAuth, __initial_auth_token);
+            } else {
+              await signInAnonymously(firebaseAuth);
+            }
+            setUserId(firebaseAuth.currentUser?.uid || crypto.randomUUID()); // Ensure userId is set
+          } catch (error) {
+            console.error("Firebase authentication error:", error);
+            setUserId(crypto.randomUUID()); // Fallback to a random ID if auth fails
+          }
+        }
+        setIsAuthReady(true);
+        setLoading(false);
+      });
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+      return () => unsubscribe(); // Cleanup auth listener on unmount
+    } catch (error) {
+      console.error("Firebase initialization error:", error);
+      setLoading(false);
+      setIsAuthReady(true); // Mark as ready even if there's an error
+    }
+  }, []);
 
-/* Custom overrides */
-body { font-family: 'Segoe UI', sans-serif; }
-.input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; border: 1px solid #ccc; border-radius: 0.375rem; }
-.btn-primary { background-color: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; }
-.btn-secondary { background-color: #bfdbfe; color: #1e3a8a; padding: 0.5rem 1rem; border-radius: 0.375rem; }
-
-2. Firebase Init: js/firebase.js
-
-// TODO: Replace with your Firebase project config
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
-
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
-
-3. Auth Logic: js/auth.js
-
-// Session Check & Redirect
-auth.onAuthStateChanged(user => {
-  if (!user && !location.href.includes('join.html')) {
-    location.href = 'join.html';
-  } else if (user && location.href.includes('join.html')) {
-    location.href = 'index.html';
-  }
-  if (user) {
-    document.getElementById('username')?.innerText = user.displayName || user.email;
-  }
-});
-
-// Google Login
-function googleLogin() {
-  const provider = new firebase.auth.GoogleAuthProvider();
-  provider.addScope('profile');
-  auth.signInWithPopup(provider);
-}
-
-// Join / Register handler
-async function handleJoin(e) {
-  e.preventDefault();
-  const name = document.getElementById('name').value;
-  const dob = document.getElementById('dob').value;
-  const file = document.getElementById('avatar').files[0];
-  const user = await auth.createUserWithEmailAndPassword(`${dob}@bytebird.me`, 'defaultPass');
-  await user.user.updateProfile({ displayName: name });
-  if (file) {
-    const ref = firebase.storage().ref(`avatars/${user.user.uid}`);
-    await ref.put(file);
-    const url = await ref.getDownloadURL();
-    await user.user.updateProfile({ photoURL: url });
-  }
-}
-
-4. Posts Logic: js/posts.js
-
-// Fetch & render posts
-async function loadPosts() {
-  const snap = await db.collection('posts').orderBy('createdAt', 'desc').get();
-  const container = document.getElementById('posts');
-  snap.forEach(doc => {
-    const data = doc.data();
-    const el = document.createElement('div');
-    el.className = 'bg-white p-4 rounded mb-4';
-    el.innerHTML = `
-      <div class="flex items-center mb-2">
-        <img src="${data.avatar}" class="h-8 w-8 rounded-full mr-2" />
-        <strong>${data.name}</strong>
-      </div>
-      <p>${data.text}</p>
-    `;
-    container.appendChild(el);
-  });
-}
-
-document.addEventListener('DOMContentLoaded', loadPosts);
-
-// Create Post
-function showCreatePost() {
-  const text = prompt('আপনার পোস্ট লিখুন:');
-  if (!text) return;
-  const user = auth.currentUser;
-  db.collection('posts').add({
-    uid: user.uid,
-    name: user.displayName,
-    avatar: user.photoURL || '',
-    text,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-  }).then(() => location.reload());
-}
-
-5. People Logic: js/people.js
-
-async function loadPeople() {
-  const snap = await db.collection('users').get();
-  const list = document.getElementById('people-list');
-  snap.forEach(doc => {
-    const u = doc.data();
-    const item = document.createElement('div');
-    item.className = 'flex justify-between bg-white p-4 rounded';
-    item.innerHTML = `
-      <div>
-        <strong>${u.name}</strong><br><small>@${u.username}</small>
-      </div>
-      <button class="btn-secondary" onclick="toggleFollow('${doc.id}')">Follow</button>
-    `;
-    list.appendChild(item);
-  });
-}
-
-function toggleFollow(uid) {
-  const user = auth.currentUser;
-  // Simplified follow logic in Firestore
-  const ref = db.collection('follows').doc(user.uid);
-  ref.set({ [uid]: true }, { merge: true });
-  alert('Following!');
-}
-
-document.addEventListener('DOMContentLoaded', loadPeople);
-
-6. Settings & Dev Unlock: js/settings.js
-
-document.getElementById('continue-policy').onclick = () => {
-  const code = prompt('সিক্রেট কোড দিন:');
-  if (code === 'Jay Radhe Krishna 108') {
-    location.href = 'dev.html';
-  } else {
-    alert('ভুল কোড!');
-  }
-};
-
-// Dev page: list accounts & actions
-if (location.href.includes('dev.html')) {
-  db.collection('users').get().then(snap => {
-    const list = document.getElementById('accounts-list');
-    snap.forEach(doc => {
-      const u = doc.data();
-      const el = document.createElement('div');
-      el.className = 'bg-white p-2 rounded mb-2 flex justify-between';
-      el.innerHTML = `
-        <span>${u.name} (@${u.username})</span>
-        <div>
-          <button onclick="impersonate('${doc.id}')">Enter</button>
-          <button onclick="deleteUser('${doc.id}')">Delete</button>
+  // Show loading screen until Firebase is initialized and auth state is determined
+  if (loading || !isAuthReady) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-100 to-white">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mx-auto"></div>
+          <p className="mt-4 text-lg text-gray-700">অ্যাপ লোড হচ্ছে, বস... একটু অপেক্ষা করুন! 🚀</p>
         </div>
-      `;
-      list.appendChild(el);
-    });
-  });
+      </div>
+    );
+  }
 
-  window.impersonate = uid => {
-    // store as admin session token
-    sessionStorage.setItem('impersonate', uid);
-    alert('Impersonation enabled! Refresh to see.');
+  return (
+    <AppContext.Provider value={{ app, db, auth, userId, isAuthReady }}>
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+// Custom Hook to use App Context
+const useAppContext = () => {
+  return useContext(AppContext);
+};
+
+// Message Box Component for user feedback
+const MessageBox = ({ message, type, onClose }) => {
+  const bgColor = type === 'error' ? 'bg-red-500' : 'bg-green-500';
+  const textColor = 'text-white';
+
+  return (
+    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4`}>
+      <div className="absolute inset-0 bg-black opacity-50"></div>
+      <div className={`${bgColor} ${textColor} p-6 rounded-lg shadow-xl max-w-sm w-full relative`}>
+        <p className="text-lg font-semibold mb-4">{message}</p>
+        <button
+          onClick={onClose}
+          className="absolute top-2 right-2 text-white hover:text-gray-200"
+          aria-label="Close message"
+        >
+          <XCircle size={24} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Main App Component
+const App = () => {
+  const { db, auth, userId, isAuthReady } = useAppContext();
+  const [currentPage, setCurrentPage] = useState('welcome'); // welcome, register, login, feed, people, privacy, admin, userSettings, editProfile
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [users, setUsers] = useState([]); // All users for "People" tab
+  const [posts, setPosts] = useState([]);
+  const [loggedInUser, setLoggedInUser] = useState(null); // Currently logged-in user's data
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [secretCodeInput, setSecretCodeInput] = useState('');
+  const [adminUsers, setAdminUsers] = useState([]); // Users for Admin panel
+  const [appLogo, setAppLogo] = useState('https://placehold.co/60x60/000/fff?text=B'); // Default app logo
+
+  // State for Register/Login forms
+  const [realName, setRealName] = useState('');
+  const [dob, setDob] = useState('');
+  const [uniqueCode, setUniqueCode] = useState(''); // New field as per description
+  const [profilePicture, setProfilePicture] = useState(null); // File object
+  const [profilePicturePreview, setProfilePicturePreview] = useState('https://placehold.co/80x80/cccccc/000?text=DP'); // Base64 or URL for display
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  // State for editing user profile in Admin Panel
+  const [editUserModal, setEditUserModal] = useState(null); // User being edited
+  const [editUserDisplayName, setEditUserDisplayName] = useState('');
+  const [editUserPhotoURL, setEditUserPhotoURL] = useState('');
+
+  // State for editing logged-in user's profile
+  const [editProfilePicturePreview, setEditProfilePicturePreview] = useState('');
+
+
+  // Function to display messages to the user
+  const showMessage = (msg, type) => {
+    setMessage(msg);
+    setMessageType(type);
   };
-  window.deleteUser = uid => {
-    db.collection('users').doc(uid).delete().then(() => alert('Deleted!'));
+
+  // Function to close the message box
+  const closeMessage = () => {
+    setMessage('');
+    setMessageType('');
   };
-}
+
+  // Handle profile picture file selection for registration
+  const handleProfilePictureChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProfilePicture(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePicturePreview(reader.result); // Store as Base64 for preview
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setProfilePicture(null);
+      setProfilePicturePreview('https://placehold.co/80x80/cccccc/000?text=DP');
+    }
+  };
+
+  // Handle profile picture file selection for editing logged-in user's profile
+  const handleProfilePictureChangeForEdit = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEditProfilePicturePreview(reader.result); // Store as Base64 for preview
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle user registration
+  const handleRegister = async () => {
+    if (!realName || !dob || !username || !password || !confirmPassword || !uniqueCode) {
+      showMessage("সব ফিল্ড পূরণ করুন, বস! 🧐", "error");
+      return;
+    }
+    if (password !== confirmPassword) {
+      showMessage("পাসওয়ার্ড মেলেনি, বস! 😅", "error");
+      return;
+    }
+    if (password.length < 6) {
+      showMessage("পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।", "error");
+      return;
+    }
+    if (uniqueCode.length !== 4 || !/^\d+$/.test(uniqueCode)) {
+      showMessage("ইউনিক কোডটি ৪-সংখ্যার সংখ্যা হতে হবে।", "error");
+      return;
+    }
+
+    try {
+      // Check if username (email part) already exists
+      const usersRef = collection(db, `artifacts/${__app_id}/public/data/users`);
+      const q = query(usersRef, where("username", "==", username));
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        showMessage("এই ইউজারনেমটি ইতিমধ্যেই ব্যবহৃত হয়েছে। অন্য একটি চেষ্টা করুন।", "error");
+        return;
+      }
+
+      // Create user with email and password (using username as email prefix)
+      const userCredential = await createUserWithEmailAndPassword(auth, `${username}@bytebird.com`, password);
+      const user = userCredential.user;
+
+      // Save user profile to Firestore
+      const userDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, user.uid);
+      await setDoc(userDocRef, {
+        realName,
+        dob,
+        username,
+        uniqueCode,
+        profilePicture: profilePicturePreview, // Storing base64 for simplicity
+        isVerified: false,
+        createdAt: Date.now(),
+        following: [], // Initialize following array
+        followers: []  // Initialize followers array
+      });
+
+      // Update logged-in user state and navigate to feed
+      setLoggedInUser({ id: user.uid, realName, dob, username, uniqueCode, profilePicture: profilePicturePreview, isVerified: false, following: [], followers: [] });
+      showMessage("রেজিস্ট্রেশন সফল হয়েছে! 🎉", "success");
+      setCurrentPage('feed');
+    } catch (error) {
+      console.error("Registration error:", error);
+      let errorMessage = "রেজিস্ট্রেশন ব্যর্থ হয়েছে।";
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = "এই ইউজারনেমটি ইতিমধ্যেই ব্যবহৃত হয়েছে।";
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = "অ্যাকাউন্ট তৈরির জন্য একটি বৈধ ইউজারনেম প্রয়োজন।";
+      }
+      showMessage(errorMessage, "error");
+    }
+  };
+
+  // Handle user login
+  const handleLogin = async () => {
+    if (!username || !password) {
+      showMessage("ইউজারনেম এবং পাসওয়ার্ড দিন, বস! 🔑", "error");
+      return;
+    }
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, `${username}@bytebird.com`, password);
+      const user = userCredential.user;
+
+      // Fetch user profile from Firestore
+      const userDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (userDocSnap.exists()) {
+        setLoggedInUser({ id: user.uid, ...userDocSnap.data() });
+        showMessage("লগইন সফল হয়েছে! 🥳", "success");
+        setCurrentPage('feed');
+      } else {
+        // If auth user exists but Firestore doc doesn't, something went wrong or it's an anonymous user
+        await signOut(auth); // Sign out the auth user
+        showMessage("আপনার প্রোফাইল ডেটা পাওয়া যায়নি। অনুগ্রহ করে আবার রেজিস্ট্রেশন করুন।", "error");
+        setCurrentPage('register');
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      let errorMessage = "লগইন ব্যর্থ হয়েছে।";
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        errorMessage = "ভুল ইউজারনেম বা পাসওয়ার্ড।";
+      }
+      showMessage(errorMessage, "error");
+    }
+  };
+
+  // Handle user logout
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setLoggedInUser(null);
+      showMessage("সফলভাবে লগআউট করা হয়েছে। 👋", "success");
+      setCurrentPage('welcome');
+    } catch (error) {
+      console.error("Logout error:", error);
+      showMessage("লগআউট করতে সমস্যা হয়েছে।", "error");
+    }
+  };
+
+  // Handle creating a new post
+  const handleCreatePost = async () => {
+    if (!newPostContent.trim()) {
+      showMessage("কিছু একটা লিখুন, বস! খালি পোস্ট হবে না। 📝", "error");
+      return;
+    }
+    if (!loggedInUser) {
+      showMessage("পোস্ট করার জন্য লগইন করুন।", "error");
+      return;
+    }
+
+    try {
+      const postsColRef = collection(db, `artifacts/${__app_id}/public/data/posts`);
+      await addDoc(postsColRef, {
+        userId: loggedInUser.id,
+        username: loggedInUser.username,
+        realName: loggedInUser.realName,
+        profilePicture: loggedInUser.profilePicture,
+        content: newPostContent.trim(),
+        timestamp: Date.now(),
+        likes: 0,
+        dislikes: 0,
+        comments: 0,
+        isVerified: loggedInUser.isVerified || false,
+      });
+      setNewPostContent(''); // Clear post content after submission
+      // Hide the modal after posting
+      document.getElementById('createPostModal').classList.add('hidden');
+      showMessage("পোস্ট সফলভাবে তৈরি হয়েছে! ✨", "success");
+    } catch (error) {
+      console.error("Error creating post:", error);
+      showMessage("পোস্ট তৈরি করতে সমস্যা হয়েছে।", "error");
+    }
+  };
+
+  // Handle following/unfollowing a user
+  const handleFollowUser = async (userToFollow) => {
+    if (!loggedInUser || !db) {
+      showMessage("লগইন না করে ফলো করা যাবে না, বস! 😅", "error");
+      return;
+    }
+    if (loggedInUser.id === userToFollow.id) {
+      showMessage("নিজেকে ফলো করা যায় না, বস! 😉", "error");
+      return;
+    }
+
+    try {
+      const loggedInUserDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, loggedInUser.id);
+      const targetUserDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, userToFollow.id);
+
+      // Check if already following
+      const isFollowing = loggedInUser.following && loggedInUser.following.includes(userToFollow.id);
+
+      if (isFollowing) {
+        // Unfollow: Remove from current user's following list and target user's followers list
+        await updateDoc(loggedInUserDocRef, {
+          following: arrayRemove(userToFollow.id)
+        });
+        await updateDoc(targetUserDocRef, {
+          followers: arrayRemove(loggedInUser.id)
+        });
+        // Update local loggedInUser state
+        setLoggedInUser(prev => ({
+          ...prev,
+          following: prev.following.filter(id => id !== userToFollow.id)
+        }));
+        showMessage(`আপনি ${userToFollow.realName} কে আনফলো করেছেন।`, "success");
+      } else {
+        // Follow: Add to current user's following list and target user's followers list
+        await updateDoc(loggedInUserDocRef, {
+          following: arrayUnion(userToFollow.id)
+        });
+        await updateDoc(targetUserDocRef, {
+          followers: arrayUnion(loggedInUser.id)
+        });
+        // Update local loggedInUser state
+        setLoggedInUser(prev => ({
+          ...prev,
+          following: [...(prev.following || []), userToFollow.id]
+        }));
+        showMessage(`আপনি ${userToFollow.realName} কে ফলো করেছেন! 🎉`, "success");
+      }
+
+    } catch (error) {
+      console.error("Error following/unfollowing user:", error);
+      showMessage("ফলো/আনফলো করতে সমস্যা হয়েছে।", "error");
+    }
+  };
 
 
----
+  // Handle submitting the secret code for admin access
+  const handleSecretCodeSubmit = () => {
+    if (secretCodeInput === "Jay Radhe Krishna 108") {
+      setShowAdminPanel(true);
+      setCurrentPage('admin'); // Navigate to admin panel directly
+      showMessage("অ্যাডমিন প্যানেলে স্বাগতম, বস! 👑", "success");
+    } else {
+      showMessage("ভুল সিক্রেট কোড! 🚨", "error");
+    }
+    setSecretCodeInput('');
+    document.getElementById('secretCodeModal').classList.add('hidden'); // Hide modal
+  };
 
-README.md
+  // Admin Panel Functions:
 
-# Bytebird Social App
+  // Toggle user verification status
+  const handleVerifyUser = async (userToVerify) => {
+    try {
+      const userDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, userToVerify.id);
+      await updateDoc(userDocRef, { isVerified: !userToVerify.isVerified });
+      showMessage(`${userToVerify.realName} ${userToVerify.isVerified ? 'আন-ভেরিফাই' : 'ভেরিফাই'} করা হয়েছে।`, "success");
+    } catch (error) {
+      console.error("Error verifying user:", error);
+      showMessage("ইউজার ভেরিফাই করতে সমস্যা হয়েছে।", "error");
+    }
+  };
 
-## Setup
-1. Clone this repo.
-2. Create Firebase project, enable Auth, Firestore, Storage.
-3. Replace `js/firebase.js` with your config.
-4. Deploy on GitHub Pages (branch `main`).
+  // Delete a user and their associated posts
+  const handleDeleteUser = async (userToDelete) => {
+    try {
+      // Delete user's posts first
+      const postsColRef = collection(db, `artifacts/${__app_id}/public/data/posts`);
+      const q = query(postsColRef, where("userId", "==", userToDelete.id));
+      const querySnapshot = await getDocs(q);
+      const deletePromises = querySnapshot.docs.map(docToDelete => deleteDoc(doc(db, `artifacts/${__app_id}/public/data/posts`, docToDelete.id)));
+      await Promise.all(deletePromises);
 
-## Pages
-- **join.html**: Register / Google login.
-- **index.html**: Feed & Post.
-- **people.html**: Discover & Follow.
-- **settings.html**: Privacy Policy + Secret Code unlocks `dev.html`.
-- **dev.html**: Admin dashboard (impersonate, delete, change logo).
+      // Delete user document from Firestore
+      const userDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, userToDelete.id);
+      await deleteDoc(userDocRef);
 
+      // Note: Firebase Auth user deletion would require server-side logic (Admin SDK)
+      // For this client-side app, we only remove the Firestore profile.
+      showMessage(`${userToDelete.realName} সফলভাবে ডিলিট করা হয়েছে। 🗑️`, "success");
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      showMessage("ইউজার ডিলিট করতে সমস্যা হয়েছে।", "error");
+    }
+  };
+
+  // Open modal to edit user profile (admin view)
+  const handleEditUser = (user) => {
+    setEditUserModal(user);
+    setEditUserDisplayName(user.realName);
+    setEditUserPhotoURL(user.profilePicture);
+  };
+
+  // Save edited user profile from admin panel
+  const handleSaveUserEdit = async () => {
+    if (!editUserModal) return;
+    try {
+      const userDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, editUserModal.id);
+      await updateDoc(userDocRef, {
+        realName: editUserDisplayName,
+        profilePicture: editUserPhotoURL,
+      });
+      showMessage(`${editUserDisplayName} এর প্রোফাইল আপডেট করা হয়েছে।`, "success");
+      setEditUserModal(null); // Close modal
+    } catch (error) {
+      console.error("Error updating user profile:", error);
+      showMessage("প্রোফাইল আপডেট করতে সমস্যা হয়েছে।", "error");
+    }
+  };
+
+  // Handle changing the global app logo
+  const handleAppLogoChange = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const newLogo = reader.result; // Base64 string
+        try {
+          const appConfigDocRef = doc(db, `artifacts/${__app_id}/public/data/appConfig`, 'main');
+          // Use setDoc with merge: true to create or update the document
+          await setDoc(appConfigDocRef, { appLogo: newLogo }, { merge: true });
+          setAppLogo(newLogo); // Update local state
+          showMessage("অ্যাপ লোগো সফলভাবে পরিবর্তন করা হয়েছে! 🎨", "success");
+        } catch (error) {
+          console.error("Error updating app logo:", error);
+          showMessage("অ্যাপ লোগো পরিবর্তন করতে সমস্যা হয়েছে।", "error");
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle saving logged-in user's own profile changes
+  const handleSaveUserProfile = async () => {
+    if (!loggedInUser || !db) {
+      showMessage("লগইন করা নেই, বস! 😅", "error");
+      return;
+    }
+    try {
+      const userDocRef = doc(db, `artifacts/${__app_id}/public/data/users`, loggedInUser.id);
+      await updateDoc(userDocRef, {
+        realName: loggedInUser.realName, // Use the updated realName from loggedInUser state directly
+        profilePicture: editProfilePicturePreview, // Use the updated preview
+      });
+      // Update the loggedInUser state to reflect changes immediately
+      setLoggedInUser(prev => ({
+        ...prev,
+        realName: loggedInUser.realName,
+        profilePicture: editProfilePicturePreview
+      }));
+      showMessage("প্রোফাইল সফলভাবে আপডেট করা হয়েছে! 🎉", "success");
+      setCurrentPage('userSettings'); // Go back to settings page
+    } catch (error) {
+      console.error("Error updating user profile:", error);
+      showMessage("প্রোফাইল আপডেট করতে সমস্যা হয়েছে।", "error");
+    }
+  };
+
+  // --- useEffect Hooks for Data Fetching ---
+
+  // Fetch all users for "People" tab and Admin panel
+  useEffect(() => {
+    if (db && isAuthReady) {
+      const usersColRef = collection(db, `artifacts/${__app_id}/public/dat
